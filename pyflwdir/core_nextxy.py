@@ -1,19 +1,22 @@
-# -*- coding: utf-8 -*-
-"""Description of NEXTXY flow direction type and methods to convert to/from general
-nextidx. This type is mainly used for the CaMa-Flood model. Note that X (column) and Y
-(row) coordinates are one-based."""
+"""Implementation of NEXTXY flow direction type and methods.
+
+This type is mainly used for the CaMa-Flood model.
+Note that X (column) and Y (row) coordinates are one-based.
+"""
 
 from pathlib import Path
-from typing import List, Union
-from numba import njit
+
 import numpy as np
+from affine import Affine
+from numba import njit
+
 from . import core, gis_utils
 
 __all__ = ["read_nextxy"]
 
 # NEXTXY type
 _ftype = "nextxy"
-_mv = np.int32(-9999)
+_mv: int = np.int32(-9999)  # type: ignore[assignment]
 # -10 is inland termination, -9 river outlet at ocean
 _pv = np.array([-9, -10], dtype=np.int32)
 # NOTE: data below for consistency with LDD / D8 types and testing
@@ -21,7 +24,9 @@ _us = np.ones((2, 3, 3), dtype=np.int32) * 2
 _us[:, 1, 1] = _pv[0]
 
 
-def from_array(flwdir, dtype=np.intp):
+def from_array(
+    flwdir: np.ndarray | tuple, dtype: type = np.intp
+) -> tuple[np.ndarray, np.ndarray, int]:
     if not (
         (isinstance(flwdir, tuple) and len(flwdir) == 2)
         or (
@@ -33,20 +38,27 @@ def from_array(flwdir, dtype=np.intp):
     return _from_array(nextx, nexty, dtype=dtype)
 
 
-def to_array(idxs_ds, shape, mv=core._mv):
+def to_array(
+    idxs_ds: np.ndarray, shape: tuple[int, int], mv: int = core._mv
+) -> np.ndarray:
     nextx, nexty = _to_array(idxs_ds, shape, mv=mv)
     return np.stack([nextx, nexty])
 
 
 @njit(cache=True)
-def _from_array(nextx, nexty, _mv=_mv, dtype=np.intp):
+def _from_array(
+    nextx: np.ndarray,
+    nexty: np.ndarray,
+    _mv: int = _mv,
+    dtype: type = np.intp,
+) -> tuple[np.ndarray, np.ndarray, int]:
     size = nextx.size
     nrow, ncol = nextx.shape[0], nextx.shape[-1]
     nextx_flat = nextx.ravel()
     nexty_flat = nexty.ravel()
     # allocate output arrays
-    pits_lst = []
-    idxs_ds = np.full(nextx.size, core._mv, dtype=dtype)
+    pits_lst: list = []
+    idxs_ds: np.ndarray = np.full(nextx.size, core._mv, dtype=dtype)
     n = 0
     for idx0 in range(nextx.size):
         if nextx_flat[idx0] == _mv:
@@ -69,7 +81,9 @@ def _from_array(nextx, nexty, _mv=_mv, dtype=np.intp):
 
 
 @njit(cache=True)
-def _to_array(idxs_ds, shape, mv=core._mv):
+def _to_array(
+    idxs_ds: np.ndarray, shape: tuple[int, int], mv: int = core._mv
+) -> tuple[np.ndarray, np.ndarray]:
     """convert 1D index to 3D NEXTXY raster"""
     ncol = shape[1]
     nextx = np.full(idxs_ds.size, _mv, dtype=np.int32)
@@ -88,7 +102,7 @@ def _to_array(idxs_ds, shape, mv=core._mv):
     return nextx.reshape(shape), nexty.reshape(shape)
 
 
-def isvalid(flwdir):
+def isvalid(flwdir: np.ndarray | tuple) -> bool:
     """True if NEXTXY raster is valid"""
     isfmt1 = isinstance(flwdir, tuple) and len(flwdir) == 2
     isfmt2 = (
@@ -98,7 +112,7 @@ def isvalid(flwdir):
         return False
     nextx, nexty = flwdir  # should work for [2,:,:] and ([:,:], [:,:])
     mask = np.logical_or(isnodata(nextx), ispit(nextx))
-    return (
+    return bool(
         nexty.dtype == "int32"
         and nextx.dtype == "int32"
         and np.all(nexty.shape == nextx.shape)
@@ -108,18 +122,20 @@ def isvalid(flwdir):
 
 
 @njit(cache=True)
-def ispit(dd, _pv=_pv):
+def ispit(dd: np.ndarray | int, _pv: np.ndarray = _pv) -> np.ndarray | bool:
     """True if NEXTXY pit"""
     return np.logical_or(dd == _pv[0], dd == _pv[1])
 
 
 @njit(cache=True)
-def isnodata(dd):
+def isnodata(dd: np.ndarray | int) -> np.ndarray | bool:
     """True if NEXTXY nodata"""
     return dd == _mv
 
 
-def read_nextxy(fn: Union[str, Path], nrow: int, ncol: int, bbox: List) -> np.ndarray:
+def read_nextxy(
+    fn: str | Path, nrow: int, ncol: int, bbox: list
+) -> tuple[np.ndarray, Affine]:
     """Read nextxy data from binary file.
 
     Parameters
@@ -140,5 +156,6 @@ def read_nextxy(fn: Union[str, Path], nrow: int, ncol: int, bbox: List) -> np.nd
     """
     data = np.fromfile(fn, "i4").reshape(2, nrow, ncol)
     assert len(bbox) == 4, "Bounding box should contain 4 coordinates."
-    transform = gis_utils.transform_from_bounds(*bbox, ncol, nrow)
+    west, south, east, north = bbox
+    transform = gis_utils.transform_from_bounds(west, south, east, north, ncol, nrow)
     return data, transform

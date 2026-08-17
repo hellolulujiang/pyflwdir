@@ -1,29 +1,31 @@
-# -*- coding: utf-8 -*-
 """Methods to derive topo/hydrographical paramters from elevation data, in some cases
- in combination with flow direction data."""
+in combination with flow direction data."""
+
+import heapq
+import math
+from typing import Literal
 
 import numpy as np
+from affine import Affine
 from numba import njit
-import math
-import heapq
 
-from . import gis_utils, core, core_d8
+from . import core, core_d8, gis_utils
 
 _mv = core._mv
 
-__all__ = ["slope", "fill_depressions"]
+__all__ = ["fill_depressions", "slope"]
 
 
 @njit(cache=True)
 def fill_depressions(
-    elevtn,
-    outlets="edge",
-    idxs_pit=None,
-    nodata=-9999.0,
-    max_depth=-1.0,
-    elv_max=None,
-    connectivity=8,
-):
+    elevtn: np.ndarray,
+    outlets: Literal["edge", "min"] = "edge",
+    idxs_pit: np.ndarray | None = None,
+    nodata: float = -9999.0,
+    max_depth: float = -1.0,
+    elv_max: float | None = None,
+    connectivity: int = 8,
+) -> tuple[np.ndarray, np.ndarray]:
     """Fill local depressions in elevation data and derived local
     D8 flow directions.
 
@@ -144,7 +146,9 @@ def fill_depressions(
 
 
 @njit(cache=True)
-def adjust_elevation(idxs_ds, seq, elevtn, mv=_mv):
+def adjust_elevation(
+    idxs_ds: np.ndarray, seq: np.ndarray, elevtn: np.ndarray, mv: int = _mv
+) -> np.ndarray:
     """Given a flow direction map, remove pits in the elevation map.
     Algorithm based on Yamazaki et al. (2012)
 
@@ -168,7 +172,7 @@ def adjust_elevation(idxs_ds, seq, elevtn, mv=_mv):
 
 
 @njit(cache=True)
-def _adjust_elevation(elevtn):
+def _adjust_elevation(elevtn: np.ndarray) -> np.ndarray:
     """fix elevation on single streamline based on minimum modification
     elevtn oderdered from up- to downstream
     """
@@ -226,7 +230,12 @@ def _adjust_elevation(elevtn):
 
 
 @njit(cache=True)
-def slope(elevtn, nodata=-9999.0, latlon=False, transform=gis_utils.IDENTITY):
+def slope(
+    elevtn: np.ndarray,
+    nodata: float = -9999.0,
+    latlon: bool = False,
+    transform: np.ndarray = gis_utils._IDENTITY,
+) -> np.ndarray:
     """Returns the local gradient
 
     The slope is calculated on the basis of the dem in a 3 x 3 cell window, using 2nd order partial derivatives.
@@ -240,9 +249,9 @@ def slope(elevtn, nodata=-9999.0, latlon=False, transform=gis_utils.IDENTITY):
         nodata value, by default -9999.0
     latlon : bool, optional
         True if WGS84 coordinates, by default False
-    transform : affine transform
-        Two dimensional transform for 2D linear mapping, by default gis_utils.IDENTITY
-
+    transform : np.ndarray, optional
+        2D array with 6 elements representing the affine transformation for raster,
+        by default identify transform (1, 0, 0, 0, -1, 0)
     Returns
     -------
     1D array of float
@@ -254,8 +263,8 @@ def slope(elevtn, nodata=-9999.0, latlon=False, transform=gis_utils.IDENTITY):
 
     elev = np.zeros((3, 3), dtype=elevtn.dtype)
 
-    for r in range(0, nrow):
-        for c in range(0, ncol):
+    for r in range(nrow):
+        for c in range(ncol):
             if elevtn[r, c] != nodata:
                 # start with matrix based on central value (inside loop)
                 elev[:, :] = elevtn[r, c]
@@ -267,10 +276,9 @@ def slope(elevtn, nodata=-9999.0, latlon=False, transform=gis_utils.IDENTITY):
                         for dc in range(-1, 2):
                             col = c + dc
                             j = dc + 1
-                            if col >= 0 and col < ncol:
-                                # fill matrix with elevation, except when nodata
-                                if elevtn[row, col] != nodata:
-                                    elev[i, j] = elevtn[row, col]
+                            # fill matrix with elevation, except when nodata
+                            if 0 <= col < ncol and elevtn[row, col] != nodata:
+                                elev[i, j] = elevtn[row, col]
 
                 dzdx = (
                     (elev[0, 0] + 2 * elev[1, 0] + elev[2, 0])
@@ -296,7 +304,9 @@ def slope(elevtn, nodata=-9999.0, latlon=False, transform=gis_utils.IDENTITY):
     return slope
 
 
-def height_above_nearest_drain(idxs_ds, seq, drain, elevtn):
+def height_above_nearest_drain(
+    idxs_ds: np.ndarray, seq: np.ndarray, drain: np.ndarray, elevtn: np.ndarray
+) -> np.ndarray:
     """Returns the height above the nearest drain (HAND), i.e.: the relative vertical
     distance (drop) to the nearest dowstream river based on drainage‐normalized
     topography and flowpaths.
@@ -330,11 +340,18 @@ def height_above_nearest_drain(idxs_ds, seq, drain, elevtn):
     return hand
 
 
-def floodplains(idxs_ds, seq, elevtn, uparea, upa_min=1000.0, b=0.3):
+def floodplains(
+    idxs_ds: np.ndarray,
+    seq: np.ndarray,
+    elevtn: np.ndarray,
+    uparea: np.ndarray,
+    upa_min: float = 1000.0,
+    b: float = 0.3,
+) -> np.ndarray:
     """Returns floodplain boundaries based on a maximum treshold (h) of HAND which is
     scaled with upstream area following h ~ A**b.
 
-    Nardi F et al (2019) GFPLAIN250m, a global high-resolution dataset of Earth’s
+    Nardi F et al (2019) GFPLAIN250m, a global high-resolution dataset of Earth's
         floodplains Sci. Data 6 180309
 
     Parameters
@@ -380,7 +397,7 @@ def floodplains(idxs_ds, seq, elevtn, uparea, upa_min=1000.0, b=0.3):
 
 
 @njit(cache=True)
-def _local_d4(idx0, idx_ds, ncol):
+def _local_d4(idx0: int, idx_ds: int, ncol: int) -> np.ndarray:
     """Return indices of d4 neighbors in diagonal d8 direction, e.g.: indices of N, W neigbors if flowdir is NW."""
     idxs_d4 = [
         idx0 - ncol,
@@ -404,8 +421,14 @@ def _local_d4(idx0, idx_ds, ncol):
 
 @njit(cache=True)
 def dig_4connectivity(
-    idxs_ds, seq, elv_flat, shape, mask=None, nodata=-9999, dz_min=1e-3
-):
+    idxs_ds: np.ndarray,
+    seq: np.ndarray,
+    elv_flat: np.ndarray,
+    shape: tuple[int, int],
+    mask: np.ndarray | None = None,
+    nodata: float = -9999,
+    dz_min: float = 1e-3,
+) -> np.ndarray:
     """Make sure that for every diagonal D8 downstream flow direction
     there is an adjacent D4 cell with same or lower elevation"""
     elv_out = elv_flat.copy()

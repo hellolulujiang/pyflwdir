@@ -1,19 +1,22 @@
-# -*- coding: utf-8 -*-
-"""Methods to derive maps of basin/stream characteristics. These methods require
-the basin indices to be ordered from down- to upstream."""
+"""Methods to derive maps of basin/stream characteristics.
 
-from numba import njit
+These methods require the basin indices to be ordered from down- to upstream.
+"""
+
 import numpy as np
+from numba import njit
 
 # import local libraries
-from . import gis_utils, core
+from . import core, gis_utils
 
 __all__ = []
 
 
 # general methods
 @njit(cache=True)
-def accuflux(idxs_ds, seq, data, nodata):
+def accuflux(
+    idxs_ds: np.ndarray, seq: np.ndarray, data: np.ndarray, nodata: float
+) -> np.ndarray:
     """Returns maps of accumulate upstream <data>
 
     Parameters
@@ -42,7 +45,9 @@ def accuflux(idxs_ds, seq, data, nodata):
 
 
 @njit(cache=True)
-def accuflux_ds(idxs_ds, seq, data, nodata):
+def accuflux_ds(
+    idxs_ds: np.ndarray, seq: np.ndarray, data: np.ndarray, nodata: float
+) -> np.ndarray:
     """Returns maps of accumulate downstream <data>
 
     Parameters
@@ -72,15 +77,15 @@ def accuflux_ds(idxs_ds, seq, data, nodata):
 
 @njit(cache=True)
 def upstream_area(
-    idxs_ds,
-    seq,
-    ncol,
-    latlon=False,
-    transform=gis_utils.IDENTITY,
-    area_factor=1,
-    nodata=-9999.0,
-    dtype=np.float64,
-):
+    idxs_ds: np.ndarray,
+    seq: np.ndarray,
+    ncol: int,
+    latlon: bool = False,
+    transform: np.ndarray = gis_utils._IDENTITY,
+    area_factor: float = 1,
+    nodata: float = -9999.0,
+    dtype: type = np.float64,
+) -> np.ndarray:
     """Returns the accumulated upstream area, invalid cells are assinged a the nodata
     value. The arae is calculated using the transform. If latlon is True, the resolution
     is interpreted in degree and transformed to m2.
@@ -97,8 +102,8 @@ def upstream_area(
         number of columns in raster
     latlon : bool, optional
         True if WGS84 coordinates, by default False
-    transform : affine transform
-        two dimensional transform for 2D linear mapping, by default gis_utils.IDENTITY
+    transform : np.ndarray
+        Affine transform coefficients for 2D linear mapping, by default gis_utils._IDENTITY
     area_factor : float, optional
         multiplication factor for unit conversion, by default 1
     nodata : float, optional
@@ -112,7 +117,7 @@ def upstream_area(
         accumulated upstream area
     """
     # intialize uparea with correct dtype
-    uparea = np.full(idxs_ds.size, nodata, dtype=dtype)
+    uparea: np.ndarray = np.full(idxs_ds.size, nodata, dtype=dtype)
     # local area
     xres, yres, north = transform[0], transform[4], transform[5]
     if latlon:
@@ -130,7 +135,13 @@ def upstream_area(
 
 
 @njit(cache=True)
-def streams(idxs_ds, seq, mask=None, max_len=0, mv=core._mv):
+def streams(
+    idxs_ds: np.ndarray,
+    seq: np.ndarray,
+    mask: np.ndarray | None = None,
+    max_len: int = 0,
+    mv: int = core._mv,
+) -> list:
     """Returns list of linear indices per stream of equal stream order.
 
     Parameters
@@ -189,7 +200,13 @@ def streams(idxs_ds, seq, mask=None, max_len=0, mv=core._mv):
 
 
 @njit(cache=True)
-def stream_order(idxs_ds, seq, idxs_us_main, mask=None, mv=core._mv):
+def stream_order(
+    idxs_ds: np.ndarray,
+    seq: np.ndarray,
+    idxs_us_main: np.ndarray,
+    mask: np.ndarray | None = None,
+    mv: int = core._mv,
+) -> np.ndarray:
     """Returns the classic or Hack's "bottum up" stream order.
 
     The main stem, based on upstream area has order 1.
@@ -226,7 +243,9 @@ def stream_order(idxs_ds, seq, idxs_us_main, mask=None, mv=core._mv):
 
 
 @njit(cache=True)
-def strahler_order(idxs_ds, seq, mask=None):
+def strahler_order(
+    idxs_ds: np.ndarray, seq: np.ndarray, mask: np.ndarray | None = None
+) -> np.ndarray:
     """Returns the strahler "top down" stream order.
 
     Rivers of the first order are the most upstream tributaries or head water cells.
@@ -269,15 +288,16 @@ def strahler_order(idxs_ds, seq, mask=None):
     return strord
 
 
+@njit(cache=True)
 def stream_distance(
-    idxs_ds,
-    seq,
-    ncol,
-    mask=None,
-    real_length=True,
-    latlon=False,
-    transform=gis_utils.IDENTITY,
-):
+    idxs_ds: np.ndarray,
+    seq: np.ndarray,
+    ncol: int,
+    mask: np.ndarray | None = None,
+    real_length: bool = True,
+    latlon: bool = False,
+    transform: np.ndarray = gis_utils._IDENTITY,
+) -> np.ndarray:
     """Returns distance to outlet or next downstream True cell in mask
 
     Parameters
@@ -292,8 +312,8 @@ def stream_distance(
         True if stream cell
     latlon : bool, optional
         True if WGS84 coordinates, by default False
-    transform : affine transform
-        Two dimensional transform for 2D linear mapping, by default gis_utils.IDENTITY
+    transform : np.ndarray
+        Affine transform coefficients for 2D linear mapping, by default gis_utils._IDENTITY
 
     Returns
     -------
@@ -317,14 +337,14 @@ def stream_distance(
 
 @njit(cache=True)
 def smooth_rivlen(
-    idxs_ds,
-    idxs_us_main,
-    rivlen,
-    min_rivlen,
-    max_window=10,
-    nodata=-9999.0,
-    mv=core._mv,
-):
+    idxs_ds: np.ndarray,
+    idxs_us_main: np.ndarray,
+    rivlen: np.ndarray,
+    min_rivlen: float,
+    max_window: int = 10,
+    nodata: float = -9999.0,
+    mv: int = core._mv,
+) -> np.ndarray:
     """Return smoothed river length, by taking the window average of river length.
     The window size is increased until the average exceeds the `min_rivlen` threshold
     or the max_window size is reached.
