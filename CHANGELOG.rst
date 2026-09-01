@@ -13,6 +13,8 @@ unreleased
 0.5.12 (01-07-2026)
 *******************
 * fix bool negation in moving window stream-order restriction (#88)
+* build the upstream cell index in CSR layout in ``core.idxs_seq``, reducing
+  the memory and runtime of ``order_cells(method="walk")`` (#TBD)
 * use a signed ``int64`` (instead of ``uint64``) index dtype for very large rasters so upscaling no longer fails with a numba typing error (#79)
 
 0.5.11 (21-04-2026)
