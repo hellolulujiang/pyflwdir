@@ -9,6 +9,8 @@ unreleased
 *******************
 * add FlwdirRaster.subbasins method to create subbasins at all river confluences
 * implement type checking with mypy (overdue maintenance)
+* build the upstream cell index in CSR layout in ``core.idxs_seq``, reducing
+  the memory and runtime of ``order_cells(method="walk")`` (#114)
 
 0.5.12 (01-07-2026)
 *******************

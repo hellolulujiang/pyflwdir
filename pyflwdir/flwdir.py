@@ -229,7 +229,8 @@ class Flwdir:
         method: {'sort', 'walk'}, optional
             Method to order nodes, based on a "sorting" algorithm where nodes are
             sorted based on their rank (might be slow for large arrays) or "walking"
-            algorithm where nodes are traced from down- to upstream (uses more memory)
+            algorithm where nodes are traced from down- to upstream (faster, but
+            holds the upstream cells of the whole network in memory)
         """
         if method == "sort":
             # slow for large arrays
