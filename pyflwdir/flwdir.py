@@ -221,26 +221,35 @@ class Flwdir:
 
     ### SET/MODIFY PROPERTIES ###
 
-    def order_cells(self, method: Literal["sort", "walk"] = "sort") -> None:
+    def order_cells(
+        self, method: Literal["sort", "walk", "dfs", "topo"] = "sort"
+    ) -> None:
         """Order cells from down- to upstream.
 
         Parameters
         ----------
-        method: {'sort', 'walk'}, optional
-            Method to order nodes, based on a "sorting" algorithm where nodes are
-            sorted based on their rank (might be slow for large arrays) or "walking"
-            algorithm where nodes are traced from down- to upstream (faster, but
-            holds the upstream cells of the whole network in memory)
+        method: {'sort', 'walk', 'dfs', 'topo'}, optional
+            Method to order nodes. "sort" sorts the nodes on their rank. "walk"
+            traces the nodes from down- to upstream, breadth-first. "dfs" traces
+            them depth-first, which keeps each subbasin together and makes the
+            sequence faster to consume. "topo" releases a node once all of its
+            upstream nodes have been ordered, which needs no upstream index at
+            all and is the lightest on memory.
         """
         if method == "sort":
             # slow for large arrays
             rnk, n = core.rank(self.idxs_ds, mv=self._mv)
             self._seq = np.argsort(rnk)[-n:].astype(self.idxs_ds.dtype)
         elif method == "walk":
-            # faster for large arrays, but also takes lots of memory
             self._seq = core.idxs_seq(self.idxs_ds, self.idxs_pit, self._mv)
+        elif method == "dfs":
+            self._seq = core.idxs_seq_dfs(self.idxs_ds, self.idxs_pit, self._mv)
+        elif method == "topo":
+            self._seq = core.idxs_seq_topo(self.idxs_ds, self._mv)
         else:
-            raise ValueError(f'Invalid method {method}, select from ["walk", "sort"]')
+            raise ValueError(
+                f'Invalid method {method}, select from ["sort", "walk", "dfs", "topo"]'
+            )
         self._nnodes = self._seq.size
 
     def main_upstream(self, uparea: np.ndarray | None = None) -> np.ndarray:
@@ -816,8 +825,7 @@ class Flwdir:
         optional: Literal[True] = ...,
         flatten: bool = ...,
         **kwargs,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     @overload
     def _check_data(
@@ -827,8 +835,7 @@ class Flwdir:
         optional: Literal[False] = ...,
         flatten: bool = ...,
         **kwargs,
-    ) -> np.ndarray:
-        ...
+    ) -> np.ndarray: ...
 
     @overload
     def _check_data(
@@ -838,8 +845,7 @@ class Flwdir:
         optional: bool,
         flatten: bool = ...,
         **kwargs,
-    ) -> np.ndarray | None:
-        ...
+    ) -> np.ndarray | None: ...
 
     def _check_data(
         self,

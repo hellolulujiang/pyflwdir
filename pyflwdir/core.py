@@ -181,6 +181,130 @@ def idxs_seq(idxs_ds: np.ndarray, idxs_pit: np.ndarray, mv: int = _mv) -> np.nda
 
 
 @njit(cache=True)
+def idxs_seq_dfs(
+    idxs_ds: np.ndarray, idxs_pit: np.ndarray, mv: int = _mv
+) -> np.ndarray:
+    """Returns indices ordered from down- to upstream, one tributary at a time.
+
+    Depth-first traversal from the pits, upstream over the flow network, after
+    Braun and Willett (2013). Every subbasin is a contiguous block of the
+    returned sequence, so the downstream cell of a cell sits a few positions
+    away rather than a whole level of the network away, as it does in the
+    breadth-first order of `idxs_seq`.
+
+    Parameters
+    ----------
+    idxs_ds, idxs_pit : 1D-array of int
+        linear index of next downstream, pit cell
+    mv : int
+        missing value
+
+    Returns
+    -------
+    idxs_seq : 1D-array of int
+        linear indices of valid cells ordered from down- to upstream
+
+    Notes
+    -----
+    With n cells and e upstream cells this takes O(n + e) time and memory. The
+    explicit stack holds at most one entry per cell, so no recursion is needed.
+
+    References
+    ----------
+    Braun, J. and Willett, S.D. (2013). A very efficient O(n), implicit and
+    parallel, method to solve the stream power equation governing fluvial
+    incision and landscape evolution. Geomorphology 180-181, 170-179.
+    """
+    indptr, idxs_us = upstream_csr(idxs_ds, mv=mv)
+    n_valid = np.intp(indptr[idxs_ds.size]) + idxs_pit.size
+    idxs_seq = np.full(n_valid, mv, idxs_ds.dtype)
+    stack = np.full(n_valid, mv, idxs_ds.dtype)
+    j, k = 0, 0
+    for idx in idxs_pit:
+        stack[k] = idx
+        k += 1
+    while k > 0:
+        k -= 1
+        idx0 = stack[k]
+        idxs_seq[j] = idx0
+        j += 1
+        # push the upstream cells in reverse, so the first comes off first
+        i0 = np.intp(idx0)
+        for m in range(np.intp(indptr[i0 + 1]) - 1, np.intp(indptr[i0]) - 1, -1):
+            stack[k] = idxs_us[m]
+            k += 1
+    return idxs_seq[:j]
+
+
+@njit(cache=True)
+def idxs_seq_topo(idxs_ds: np.ndarray, mv: int = _mv) -> np.ndarray:
+    """Returns indices ordered from down- to upstream, without the upstream cells.
+
+    A cell is ready as soon as all of its upstream cells have been added, which
+    only takes a count per cell, not the upstream cells themselves (Kahn, 1962).
+    The traversal runs from the headwaters down and the result is reversed in
+    place, so the returned sequence runs from down- to upstream like the others.
+
+    Parameters
+    ----------
+    idxs_ds : 1D-array of int
+        linear index of next downstream cell
+    mv : int
+        missing value
+
+    Returns
+    -------
+    idxs_seq : 1D-array of int
+        linear indices of valid cells ordered from down- to upstream
+
+    Notes
+    -----
+    With n cells this takes O(n) time and 2 * n values of memory: the counts and
+    the sequence, which doubles as the queue. Cells that are part of a loop are
+    never ready and are left out, as they are in `idxs_seq`.
+
+    References
+    ----------
+    Kahn, A.B. (1962). Topological sorting of large networks. Communications of
+    the ACM 5(11), 558-562.
+    """
+    n = idxs_ds.size
+    # count the upstream cells of each cell; a pit is not upstream of itself
+    n_up = np.zeros(n, dtype=idxs_ds.dtype)
+    n_valid = 0
+    for idx0 in range(n):
+        idx_ds = idxs_ds[idx0]
+        if idx_ds != mv:
+            n_valid += 1
+            if idx_ds != idx0:
+                n_up[idx_ds] += 1
+    # the sequence doubles as the queue: first the cells without upstream cells,
+    # then every cell whose upstream cells have all been added
+    idxs_seq = np.full(n_valid, mv, idxs_ds.dtype)
+    j = 0
+    for idx0 in range(n):
+        if idxs_ds[idx0] != mv and n_up[idx0] == 0:
+            idxs_seq[j] = idx0
+            j += 1
+    i = 0
+    while i < j:
+        idx0 = np.intp(idxs_seq[i])
+        idx_ds = np.intp(idxs_ds[idx0])
+        if idx_ds != idx0:
+            n_up[idx_ds] -= 1
+            if n_up[idx_ds] == 0:
+                idxs_seq[j] = idx_ds
+                j += 1
+        i += 1
+    # the queue runs from up- to downstream; reverse it in place
+    for m in range(j // 2):
+        idx0 = idxs_seq[m]
+        idxs_seq[m] = idxs_seq[j - 1 - m]
+        idxs_seq[j - 1 - m] = idx0
+    return idxs_seq[:j]
+
+
+@njit(cache=True)
 def fillnodata_upstream(
     idxs_ds: np.ndarray, seq: np.ndarray, data: np.ndarray, nodata: float
 ) -> np.ndarray:

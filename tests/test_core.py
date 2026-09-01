@@ -61,6 +61,28 @@ def test_downstream(test_data, flwdir, request):
 
 
 @pytest.mark.parametrize("test_data", ["test_data0", "test_data1", "test_data2"])
+def test_idxs_seq_orderings(test_data, request):
+    test_data = request.getfixturevalue(test_data)
+    idxs_ds, idxs_pit, seq, rank, mv = [p.copy() for p in test_data]
+    idxs_ds[rank == -1] = mv
+    n = idxs_ds.size
+    seqs = {
+        "walk": core.idxs_seq(idxs_ds, idxs_pit, mv=mv),
+        "dfs": core.idxs_seq_dfs(idxs_ds, idxs_pit, mv=mv),
+        "topo": core.idxs_seq_topo(idxs_ds, mv=mv),
+    }
+    nonpit = (idxs_ds != mv) & (idxs_ds != np.arange(n, dtype=idxs_ds.dtype))
+    idxs_up = np.where(nonpit)[0]
+    for name, seq1 in seqs.items():
+        # the same cells as the sorted sequence of the fixture
+        assert np.array_equal(np.sort(seq1), np.sort(seq)), name
+        # every cell comes after the cell it drains into
+        pos = np.full(n, -1, np.int64)
+        pos[seq1] = np.arange(seq1.size)
+        assert np.all(pos[idxs_ds[idxs_up]] < pos[idxs_up]), name
+
+
+@pytest.mark.parametrize("test_data", ["test_data0", "test_data1", "test_data2"])
 def test_upstream_csr(test_data, request):
     test_data = request.getfixturevalue(test_data)
     idxs_ds, idxs_pit, seq, rank, mv = [p.copy() for p in test_data]
