@@ -44,12 +44,12 @@ def layering_conflict_free(idxs_ds, mv):
             if ds != i:
                 n_up[ds] += 1
     done = np.zeros(n, np.uint8)
-    claimed = np.zeros(n, np.uint8)          # downstream cells taken this layer
+    claimed = np.zeros(n, np.uint8)  # downstream cells taken this layer
     curr = np.empty(n, np.int32)
     nxt = np.empty(n, np.int32)
     taken = np.empty(n, np.int32)
     n_curr = 0
-    for i in range(n):                       # start from the headwaters
+    for i in range(n):  # start from the headwaters
         if idxs_ds[i] != mv and n_up[i] == 0:
             curr[n_curr] = i
             n_curr += 1
@@ -61,13 +61,13 @@ def layering_conflict_free(idxs_ds, mv):
             if done[idx] == 1:
                 continue
             ds = idxs_ds[idx]
-            if ds == mv or ds == idx:        # a pit writes nowhere
+            if ds == mv or ds == idx:  # a pit writes nowhere
                 layer[idx] = lay
                 done[idx] = 1
                 n_done += 1
                 continue
-            if claimed[ds] == 1:             # someone in this layer writes there
-                nxt[n_nxt] = idx             # so this cell waits one layer
+            if claimed[ds] == 1:  # someone in this layer writes there
+                nxt[n_nxt] = idx  # so this cell waits one layer
                 n_nxt += 1
                 continue
             layer[idx] = lay
@@ -80,7 +80,7 @@ def layering_conflict_free(idxs_ds, mv):
             if n_up[ds] == 0 and done[ds] == 0:
                 nxt[n_nxt] = ds
                 n_nxt += 1
-        for i in range(n_taken):             # release the claims for the next layer
+        for i in range(n_taken):  # release the claims for the next layer
             claimed[taken[i]] = 0
         curr, nxt = nxt, curr
         n_curr, lay = n_nxt, lay + 1
@@ -156,7 +156,9 @@ def main():
     start_l = np.zeros(nl + 1, np.int64)
     np.cumsum(np.bincount(layer[ok], minlength=nl), out=start_l[1:])
     key = layer[cells_l] * np.int64(ids.size + 1) + ids[cells_l].astype(np.int64)
-    assert np.unique(key).size == key.size, "two cells of one layer share a downstream cell"
+    assert (
+        np.unique(key).size == key.size
+    ), "two cells of one layer share a downstream cell"
 
     seq = core.idxs_seq(ids, ip, mv)
     ref = streams.accuflux(ids, seq, area, -9999.0)

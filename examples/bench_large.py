@@ -69,10 +69,11 @@ def build(label, idxs_ds, idxs_pit):
 def one(path, label, repeat):
     from pyflwdir import streams
 
-    tiny = np.array([1, 1, -1], dtype=np.int32)          # numba compiles here,
-    build(label, tiny, core.pit_indices(tiny))           # before anything is timed
-    streams.accuflux(tiny, core.idxs_seq(tiny, core.pit_indices(tiny), MV),
-                     np.ones(3), -9999.0)
+    tiny = np.array([1, 1, -1], dtype=np.int32)  # numba compiles here,
+    build(label, tiny, core.pit_indices(tiny))  # before anything is timed
+    streams.accuflux(
+        tiny, core.idxs_seq(tiny, core.pit_indices(tiny), MV), np.ones(3), -9999.0
+    )
 
     idxs_ds = np.fromfile(path, dtype=np.int32)
     idxs_pit = core.pit_indices(idxs_ds)
@@ -87,11 +88,18 @@ def one(path, label, repeat):
         _once(lambda: streams.accuflux(idxs_ds, seq, data, -9999.0))
         for _ in range(repeat)
     )
-    print(json.dumps(dict(
-        ordering=label, cells=int(idxs_ds.size), sequence=int(seq.size),
-        build_s=round(t_build, 2), accuflux_s=round(t_acc, 2),
-        peak_rss_gib=round(peak / 2**30, 2),
-    )))
+    print(
+        json.dumps(
+            dict(
+                ordering=label,
+                cells=int(idxs_ds.size),
+                sequence=int(seq.size),
+                build_s=round(t_build, 2),
+                accuflux_s=round(t_acc, 2),
+                peak_rss_gib=round(peak / 2**30, 2),
+            )
+        )
+    )
 
 
 def _once(fn):
@@ -110,8 +118,16 @@ def main():
         return one(a.i32, a.only, a.repeat)
     for label in METHODS:
         r = subprocess.run(
-            [sys.executable, __file__, a.i32, "--only", label,
-             "--repeat", str(a.repeat)])
+            [
+                sys.executable,
+                __file__,
+                a.i32,
+                "--only",
+                label,
+                "--repeat",
+                str(a.repeat),
+            ]
+        )
         if r.returncode != 0:
             print(json.dumps(dict(ordering=label, failed=True)))
 
