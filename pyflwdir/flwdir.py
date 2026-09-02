@@ -825,7 +825,8 @@ class Flwdir:
         optional: Literal[True] = ...,
         flatten: bool = ...,
         **kwargs,
-    ) -> None: ...
+    ) -> None:
+        ...
 
     @overload
     def _check_data(
@@ -835,7 +836,8 @@ class Flwdir:
         optional: Literal[False] = ...,
         flatten: bool = ...,
         **kwargs,
-    ) -> np.ndarray: ...
+    ) -> np.ndarray:
+        ...
 
     @overload
     def _check_data(
@@ -845,7 +847,8 @@ class Flwdir:
         optional: bool,
         flatten: bool = ...,
         **kwargs,
-    ) -> np.ndarray | None: ...
+    ) -> np.ndarray | None:
+        ...
 
     def _check_data(
         self,
