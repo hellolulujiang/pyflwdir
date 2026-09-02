@@ -60,6 +60,21 @@ def test_downstream(test_data, flwdir, request):
         assert np.all(rank3[idxs1] == n_up)
 
 
+def test_idxs_seq_orderings_nodata_target():
+    # cell 1 drains into cell 2, which is itself nodata: walk and dfs leave
+    # cell 1 out, topo keeps it, and nobody may touch cell 2 or corrupt counts
+    idxs_ds = np.array([0, 2, -1, 0], dtype=np.int32)  # 0 pit, 3 -> 0
+    mv = np.int32(-1)
+    idxs_pit = core.pit_indices(idxs_ds)
+    walk = core.idxs_seq(idxs_ds, idxs_pit, mv)
+    dfs = core.idxs_seq_dfs(idxs_ds, idxs_pit, mv)
+    topo = core.idxs_seq_topo(idxs_ds, mv)
+    assert np.array_equal(np.sort(walk), [0, 3])
+    assert np.array_equal(np.sort(dfs), [0, 3])
+    assert np.array_equal(np.sort(topo), [0, 1, 3])
+    assert 2 not in topo
+
+
 @pytest.mark.parametrize("test_data", ["test_data0", "test_data1", "test_data2"])
 def test_idxs_seq_orderings(test_data, request):
     test_data = request.getfixturevalue(test_data)
