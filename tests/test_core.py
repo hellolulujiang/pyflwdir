@@ -83,6 +83,19 @@ def test_upstream_csr(test_data, request):
         assert np.array_equal(idxs_us[indptr[idx0] : indptr[idx0 + 1]], us0)
 
 
+def test_upstream_csr_high_fanin():
+    # more than 127 cells draining into one cell: upstream_count returns int8,
+    # which saturates, while the CSR index counts in the index dtype
+    n = 130
+    idxs_ds = np.full(n, n - 1, dtype=np.int32)
+    idxs_ds[n - 1] = n - 1  # pit
+    mv = np.int32(-1)
+    indptr, idxs_us = core.upstream_csr(idxs_ds, mv=mv)
+    assert indptr[n] == idxs_us.size == n - 1
+    seq = core.idxs_seq(idxs_ds, core.pit_indices(idxs_ds), mv)
+    assert seq.size == n
+
+
 @pytest.mark.parametrize(
     "test_data, flwdir", [("test_data0", "flwdir0"), ("test_data0", "flwdir0")]
 )
