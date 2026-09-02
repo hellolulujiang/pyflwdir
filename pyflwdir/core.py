@@ -261,7 +261,9 @@ def idxs_seq_topo(idxs_ds: np.ndarray, mv: int = _mv) -> np.ndarray:
     -----
     With n cells this takes O(n) time and 2 * n values of memory: the counts and
     the sequence, which doubles as the queue. Cells that are part of a loop are
-    never ready and are left out, as they are in `idxs_seq`.
+    never ready and are left out, as they are in `idxs_seq`. A loop's upstream
+    tributaries, however, are kept here while `idxs_seq` leaves them out with
+    the loop; on loop-free data both cover the same cells.
 
     References
     ----------
