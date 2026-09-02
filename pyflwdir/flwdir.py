@@ -237,7 +237,6 @@ class Flwdir:
             rnk, n = core.rank(self.idxs_ds, mv=self._mv)
             self._seq = np.argsort(rnk)[-n:].astype(self.idxs_ds.dtype)
         elif method == "walk":
-            # faster for large arrays, but also takes lots of memory
             self._seq = core.idxs_seq(self.idxs_ds, self.idxs_pit, self._mv)
         else:
             raise ValueError(f'Invalid method {method}, select from ["walk", "sort"]')
