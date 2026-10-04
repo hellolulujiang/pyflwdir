@@ -6,7 +6,7 @@ These methods require the basin indices to be ordered from down- to upstream.
 import math
 
 import numpy as np
-from numba import njit
+from numba import njit, prange
 
 # import local libraries
 from . import core, gis_utils
@@ -40,6 +40,69 @@ def accuflux(
     # intialize output with correct dtype
     accu = data.copy()
     for idx0 in seq[::-1]:  # up- to downstream
+        idx_ds = idxs_ds[idx0]
+        if idx0 != idx_ds and accu[idx_ds] != nodata and accu[idx0] != nodata:
+            accu[idx_ds] += accu[idx0]
+    return accu
+
+
+@njit(cache=True, parallel=True)
+def accuflux_segments(
+    idxs_ds: np.ndarray,
+    seq: np.ndarray,
+    data: np.ndarray,
+    nodata: float,
+    starts: np.ndarray,
+    sizes: np.ndarray,
+) -> np.ndarray:
+    """Returns maps of accumulate upstream <data>, over the segments in threads
+
+    Each segment is a complete subbasin and holds every cell upstream of its
+    first cell, so a thread writes only inside the segment it is given. What is
+    left, the first cell of every segment and the cells outside the segments,
+    is accumulated afterwards in sequence order.
+
+    Parameters
+    ----------
+    idxs_ds : 1D-array of intp
+        index of next downstream cell
+    seq : 1D array of int
+        ordered cell indices from down- to upstream, depth-first
+    data : 1D array
+        local values to be accumulated
+    nodata : float, integer
+        nodata value
+    starts, sizes : 1D-array of int
+        position and length of each segment in `seq`, from `core.seq_segments`
+
+    Returns
+    -------
+    1D array of data.dtype
+        accumulated upstream data
+
+    Notes
+    -----
+    The values of a cell's upstream cells are added in the same order as in
+    `accuflux`, so the result is identical to it, whatever the number of
+    threads.
+    """
+    accu = data.copy()
+    for k in prange(starts.size):  # the segments, in threads
+        start = starts[k]
+        for pos in range(start + sizes[k] - 1, start, -1):  # up- to downstream
+            idx0 = seq[pos]
+            idx_ds = idxs_ds[idx0]
+            if accu[idx_ds] != nodata and accu[idx0] != nodata:
+                accu[idx_ds] += accu[idx0]
+    # the cells left: the first cell of every segment drains outside it, and a
+    # main stem cell takes values from several segments
+    done = np.zeros(seq.size, dtype=np.bool_)
+    for k in range(starts.size):
+        done[starts[k] + 1 : starts[k] + sizes[k]] = True
+    for pos in range(seq.size - 1, -1, -1):  # up- to downstream
+        if done[pos]:
+            continue
+        idx0 = seq[pos]
         idx_ds = idxs_ds[idx0]
         if idx0 != idx_ds and accu[idx_ds] != nodata and accu[idx0] != nodata:
             accu[idx_ds] += accu[idx0]

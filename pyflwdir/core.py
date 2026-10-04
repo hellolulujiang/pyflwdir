@@ -326,6 +326,60 @@ def idxs_seq_topo(idxs_ds: np.ndarray, mv: int = _mv) -> np.ndarray:
 
 
 @njit(cache=True)
+def seq_segments(
+    idxs_seq: np.ndarray, n_upstream: np.ndarray, max_size: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Returns the segments of a depth-first sequence that hold no more than
+    `max_size` cells and that drain into one another nowhere.
+
+    In a depth-first sequence the cells draining to a cell occupy the positions
+    from that cell's own onwards, as many as there are cells draining to it, so
+    such a stretch is a complete subbasin and the only cell of it that drains
+    outside it is the first. Walking the sequence from the start and taking
+    every subbasin that fits leaves the cells with more cells upstream than
+    `max_size`, the main stems, outside the segments.
+
+    Parameters
+    ----------
+    idxs_seq : 1D-array of int
+        linear indices of valid cells, depth-first from down- to upstream
+    n_upstream : 1D-array of int
+        number of cells draining to each cell, that cell included
+    max_size : int
+        largest number of cells a segment may hold
+
+    Returns
+    -------
+    starts : 1D-array of int
+        position in `idxs_seq` where each segment starts
+    sizes : 1D-array of int
+        number of cells in each segment
+
+    Notes
+    -----
+    The segments come in the order they appear in the sequence and hold no cell
+    twice, and the cells left outside them keep their relative order, so a
+    kernel run over the segments and then over the remaining cells in sequence
+    order adds the values of a cell's upstream cells in the same order as a run
+    over the whole sequence.
+    """
+    starts = np.empty(idxs_seq.size, dtype=np.int64)
+    sizes = np.empty(idxs_seq.size, dtype=np.int64)
+    n_seg = 0
+    pos = 0
+    while pos < idxs_seq.size:
+        size = int(n_upstream[idxs_seq[pos]])
+        if size <= max_size:
+            starts[n_seg] = pos
+            sizes[n_seg] = size
+            n_seg += 1
+            pos += size
+        else:  # a main stem cell: step over it and try the cells upstream of it
+            pos += 1
+    return starts[:n_seg], sizes[:n_seg]
+
+
+@njit(cache=True)
 def fillnodata_upstream(
     idxs_ds: np.ndarray, seq: np.ndarray, data: np.ndarray, nodata: float
 ) -> np.ndarray:

@@ -6,7 +6,7 @@ import pprint
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import numpy as np
-from numba import njit
+from numba import get_num_threads, njit
 
 from . import (
     arithmetics,
@@ -122,6 +122,8 @@ class Flwdir:
         self._pit = idxs_pit
         self.idxs_outlet = idxs_outlet
         self._seq = idxs_seq
+        # the method that built self._seq; unknown for a sequence passed in here
+        self._seq_method: str | None = None
         self._nnodes = nnodes
         # either -1 for signed integers or 4294967295 for uint32
         self._mv: Any = core._mv
@@ -176,7 +178,7 @@ class Flwdir:
     def idxs_seq(self) -> np.ndarray:
         """Linear indices of valid cells ordered from down- to upstream."""
         if self._seq is None:
-            self.order_cells(method="walk")
+            self.order_cells(method="dfs")
         return cast(np.ndarray, self._seq)
 
     @property
@@ -241,23 +243,23 @@ class Flwdir:
     ### SET/MODIFY PROPERTIES ###
 
     def order_cells(
-        self, method: Literal["sort", "walk", "dfs", "topo"] = "walk"
+        self, method: Literal["sort", "walk", "dfs", "topo"] = "dfs"
     ) -> None:
         """Order cells from down- to upstream.
 
         Parameters
         ----------
-        method: {'walk', 'dfs', 'topo', 'sort'}, optional
-            Method to order nodes. The default "walk" traces the nodes from down-
-            to upstream breadth-first, holding the upstream cells of the whole
-            network in memory in compressed sparse row layout. "dfs" traces them
-            depth-first with the same index, which keeps each subbasin together
-            in the sequence and may improve locality when the sequence is
-            consumed. "topo" releases a node once all of its upstream nodes have
-            been ordered, which needs a count per node instead of the upstream
-            index.
-            "sort" sorts the nodes on their rank, which can be slower for large
-            arrays.
+        method: {'dfs', 'walk', 'topo', 'sort'}, optional
+            Method to order nodes. The default "dfs" traces the nodes from down-
+            to upstream depth-first, over an index of the upstream cells of the
+            whole network in compressed sparse row layout. It finishes one
+            tributary before it starts the next, so the nodes draining to any one
+            node are an unbroken stretch of the sequence and a node sits close to
+            the node it drains into. "walk" traces them breadth-first over the
+            same index, which groups the nodes by their rank. "topo" releases a
+            node once all of its upstream nodes have been ordered, which needs a
+            count per node instead of the upstream index. "sort" sorts the nodes
+            on their rank, which can be slower for large arrays.
 
         Notes
         -----
@@ -267,10 +269,25 @@ class Flwdir:
         area, basins, stream order and the like give the same result for each.
         The relative order of cells that do not drain into one another differs
         though, so labels given in sequence order (subbasins_streamorder) and
-        the order of the features of streams change with the method, floating
-        point accumulations can differ in the last bits, and dem_adjust and
-        dem_dig_d4, which adjust the elevation one flow path at a time in
-        sequence order, can give different adjustments.
+        the order of the features of streams change with the method, and
+        floating point accumulations can differ in the last bits. dem_adjust,
+        dem_dig_d4, subbasins_area and subbasins_pfafstetter need the cells
+        grouped by rank and build that sequence themselves, so they do not
+        follow this setting.
+
+        The "Cell orderings" notebook of the user guide builds all four on the
+        Rhine example and shows what each is good for.
+
+        References
+        ----------
+        The "dfs" and "topo" orderings are standard graph traversals, see
+        core.idxs_seq_dfs and core.idxs_seq_topo; their implementations here,
+        and the comparison of what each ordering costs to build and to read,
+        come from FlowTopo:
+
+        Jiang, L., Wu, H., Chen, W., Huang, Z., Yamazaki, D., Yang, T. and Li,
+        L. (2026). FlowTopo (v1.0.0). Zenodo.
+        https://doi.org/10.5281/zenodo.22227621
         """
         if method == "sort":
             # slow for large arrays
@@ -286,7 +303,54 @@ class Flwdir:
             raise ValueError(
                 f'Invalid method {method}, select from ["walk", "dfs", "topo", "sort"]'
             )
+        self._seq_method = method
         self._nnodes = self._seq.size
+
+    def seq_segments(self, n_parts: int | None = None) -> tuple[np.ndarray, np.ndarray]:
+        """Split the sequence into subbasins that drain into one another nowhere.
+
+        Each segment is a stretch of `idxs_seq` holding a cell and every cell
+        that drains to it, so a kernel can be run over the segments
+        independently. What is left outside them are the main stems, which take
+        values from several segments and have to be run afterwards.
+
+        Parameters
+        ----------
+        n_parts : int, optional
+            Number of segments aimed for, by default four per thread. A larger
+            number gives smaller segments and leaves more cells on the main
+            stems.
+
+        Returns
+        -------
+        starts : 1D-array of int
+            position in `idxs_seq` where each segment starts
+        sizes : 1D-array of int
+            number of cells in each segment
+
+        Raises
+        ------
+        ValueError
+            if the cells are not ordered depth-first. A sequence restored from a
+            file does not carry the method that built it, so call
+            order_cells(method="dfs") after loading one.
+        """
+        idxs_seq = self.idxs_seq  # ordered on first use, depth-first by default
+        if self._seq_method != "dfs":
+            raise ValueError(
+                "The segments need the cells ordered depth-first; "
+                'call order_cells(method="dfs") first.'
+            )
+        if n_parts is None:
+            n_parts = get_num_threads() * 4
+        n_upstream = streams.accuflux(
+            idxs_ds=self.idxs_ds,
+            seq=idxs_seq,
+            data=np.ones(self.idxs_ds.size, dtype=np.int64),
+            nodata=-1,
+        )
+        max_size = max(1, int(idxs_seq.size // max(1, n_parts)))
+        return core.seq_segments(idxs_seq, n_upstream, max_size)
 
     def main_upstream(self, uparea: np.ndarray | None = None) -> np.ndarray:
         """Return the main upstream node for each node.
@@ -330,6 +394,7 @@ class Flwdir:
         self._pit = np.unique(np.concatenate([self.idxs_pit, idxs1]))
         # Reset traversal state and all values derived from the flow topology.
         self._seq = None
+        self._seq_method = None
         self._nnodes = None
         for key in ("rank", "strord", "idxs_us_main", "distnc"):
             self._cached.pop(key, None)
@@ -658,6 +723,7 @@ class Flwdir:
         data: np.ndarray,
         nodata: float = -9999,
         direction: Literal["up", "down"] = "up",
+        parallel: bool = False,
     ) -> np.ndarray:
         """Return accumulated data values along the flow directions.
 
@@ -670,13 +736,28 @@ class Flwdir:
             Missing data value for cells outside domain
         direction : {'up', 'down'}, optional
             direction in which to accumulate data, by default upstream
+        parallel : bool, optional
+            Accumulate the subbasins in threads, by default False. Needs the
+            cells ordered depth-first, which is the default ordering, and
+            accumulates upstream only. The result is the same as the serial one
+            whatever the number of threads, see `accuflux_segments`.
 
         Returns
         -------
         array with `data.dtype`
             Accumulated values, with the same shape as `data`.
         """
-        if direction == "up":
+        if parallel and direction == "up":
+            starts, sizes = self.seq_segments()
+            accu = streams.accuflux_segments(
+                idxs_ds=self.idxs_ds,
+                seq=self.idxs_seq,
+                data=self._check_data(data, "data"),
+                nodata=nodata,
+                starts=starts,
+                sizes=sizes,
+            )
+        elif direction == "up":
             accu = streams.accuflux(
                 idxs_ds=self.idxs_ds,
                 seq=self.idxs_seq,
@@ -752,7 +833,10 @@ class Flwdir:
         """
         elevtn_out = dem.adjust_elevation(
             idxs_ds=self.idxs_ds,
-            seq=self.idxs_seq,
+            # Yamazaki's method starts from the longest stream paths, so this needs
+            # the cells grouped by their distance to the outlet, whatever the
+            # ordering of this object is
+            seq=core.idxs_seq(self.idxs_ds, self.idxs_pit, self._mv),
             elevtn=self._check_data(elevtn, "elevtn"),
             mv=self._mv,
         )

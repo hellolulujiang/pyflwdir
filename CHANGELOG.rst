@@ -30,6 +30,30 @@ unreleased
   factors for every cell, greatly reducing the runtime of
   ``Flwdir.stream_distance(unit="m")`` for geographic rasters
 * fix remaining ``uint64`` typing issues (#126)
+* add a "Cell orderings" notebook to the user guide, which builds the four
+  ``order_cells`` methods on the Rhine example, maps what each sequence looks
+  like and shows what changes with the method, and cite FlowTopo, where the
+  "dfs" and "topo" implementations come from, in the ``order_cells`` docstring
+* make ``method="dfs"`` the default of ``order_cells`` and ``idxs_seq`` for
+  ``Flwdir`` and ``FlwdirRaster``. The cells draining to any one cell are then
+  an unbroken stretch of the sequence, so a subbasin can be taken out of it by
+  slicing, and a cell sits close to the cell it drains into. As with any change
+  of ordering, the labels of ``subbasins_streamorder``, the order of the
+  features of ``streams`` and the last bits of floating point accumulations can
+  differ from earlier versions
+* build a rank-ordered sequence inside ``dem_adjust``, ``dem_dig_d4``,
+  ``subbasins_area`` and ``subbasins_pfafstetter`` instead of using
+  ``idxs_seq``. Each of them reads a value another cell of the same rank has
+  written, or picks between tributaries of equal area in the order the cells
+  come in, so their result follows the ordering. They now return what they
+  returned before, whatever ordering is set on the object
+* accumulate upstream in threads with ``accuflux(parallel=True)`` and
+  ``upstream_area(parallel=True)``. ``Flwdir.seq_segments`` cuts the depth-first
+  sequence into stretches that each hold a cell and everything draining to it, so
+  a thread reads and writes inside its own stretch; the main stems left outside
+  them follow in sequence order. The values of a cell's upstream cells are added
+  in the same order as in a serial run, so the result is identical whatever the
+  number of threads (#85)
 
 0.5.12 (01-07-2026)
 *******************

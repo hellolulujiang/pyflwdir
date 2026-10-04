@@ -230,6 +230,78 @@ def test_idxs_seq_dfs_keeps_basins_together_integration(test_data, request):
     _idxs_seq_dfs_keeps_basins_together_body(request.getfixturevalue(test_data))
 
 
+def _seq_segments_body(test_data):
+    # the segments hold no cell twice, each one is the cells draining to its
+    # first cell, and only cells with more upstream cells than max_size are
+    # left out of them
+    idxs_ds, idxs_pit, seq, rank, mv = [p.copy() for p in test_data]
+    idxs_ds[rank == -1] = mv
+    dfs = core.idxs_seq_dfs(idxs_ds, idxs_pit, mv=mv)
+    n_upstream = streams.accuflux(
+        idxs_ds, dfs, np.ones(idxs_ds.size, dtype=np.int64), -1
+    )
+    for max_size in [1, 3, max(1, dfs.size // 4), dfs.size]:
+        starts, sizes = core.seq_segments(dfs, n_upstream, max_size)
+        assert np.all(sizes > 0) and np.all(sizes <= max_size)
+        assert np.all(starts[:-1] + sizes[:-1] <= starts[1:])  # in order, no overlap
+        assert starts.size == 0 or starts[-1] + sizes[-1] <= dfs.size
+        covered = np.zeros(dfs.size, dtype=bool)
+        for start, size in zip(starts, sizes):
+            covered[start : start + size] = True
+            assert size == n_upstream[dfs[start]]
+            ids = basins.basins(idxs_ds, dfs[start : start + 1], dfs)
+            assert np.array_equal(
+                np.sort(dfs[start : start + size]), np.flatnonzero(ids > 0)
+            )
+        # the cells left out have more cells upstream than fit in a segment
+        assert np.all(n_upstream[dfs[~covered]] > max_size)
+    # with max_size at the size of the sequence every basin is one segment
+    starts, sizes = core.seq_segments(dfs, n_upstream, dfs.size)
+    assert starts.size == idxs_pit.size and sizes.sum() == dfs.size
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("test_data", ["test_data_uint32", "test_data_int64"])
+def test_seq_segments_unit(test_data, request):
+    _seq_segments_body(request.getfixturevalue(test_data))
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("test_data", ["test_data_real"])
+def test_seq_segments_integration(test_data, request):
+    _seq_segments_body(request.getfixturevalue(test_data))
+
+
+def _accuflux_segments_body(test_data):
+    # the threaded accumulation gives the same values as the serial one
+    idxs_ds, idxs_pit, seq, rank, mv = [p.copy() for p in test_data]
+    idxs_ds[rank == -1] = mv
+    dfs = core.idxs_seq_dfs(idxs_ds, idxs_pit, mv=mv)
+    n_upstream = streams.accuflux(
+        idxs_ds, dfs, np.ones(idxs_ds.size, dtype=np.int64), -1
+    )
+    rng = np.random.default_rng(0)
+    data = rng.random(idxs_ds.size).astype(np.float64)
+    data[idxs_ds == mv] = -9999.0
+    serial = streams.accuflux(idxs_ds, dfs, data, -9999.0)
+    for max_size in [1, 3, max(1, dfs.size // 4), dfs.size]:
+        starts, sizes = core.seq_segments(dfs, n_upstream, max_size)
+        out = streams.accuflux_segments(idxs_ds, dfs, data, -9999.0, starts, sizes)
+        assert np.array_equal(out, serial)  # identical, not just close
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("test_data", ["test_data_uint32", "test_data_int64"])
+def test_accuflux_segments_unit(test_data, request):
+    _accuflux_segments_body(request.getfixturevalue(test_data))
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("test_data", ["test_data_real"])
+def test_accuflux_segments_integration(test_data, request):
+    _accuflux_segments_body(request.getfixturevalue(test_data))
+
+
 def _upstream_csr_body(test_data):
     idxs_ds, idxs_pit, seq, rank, mv = [p.copy() for p in test_data]
     idxs_ds[rank == -1] = mv

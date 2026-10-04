@@ -303,7 +303,7 @@ class FlwdirRaster(Flwdir):
     def idxs_seq(self) -> np.ndarray:
         """Linear indices of valid cells ordered from down- to upstream."""
         if self._seq is None:
-            self.order_cells(method="walk")
+            self.order_cells(method="dfs")
         return cast(np.ndarray, self._seq)
 
     ### SET/MODIFY PROPERTIES ###
@@ -715,7 +715,10 @@ class FlwdirRaster(Flwdir):
             idxs_pit=self.idxs_pit,
             idxs_ds=self.idxs_ds,
             idxs_us_main=self.idxs_us_main,
-            seq=self.idxs_seq,
+            # which tributaries of equal area are picked follows the order the
+            # cells come in, so this needs the cells grouped by their distance
+            # to the outlet, whatever the ordering of this object is
+            seq=core.idxs_seq(self.idxs_ds, self.idxs_pit, self._mv),
             uparea=uparea,
             mask=mask,
             depth=depth,
@@ -748,7 +751,11 @@ class FlwdirRaster(Flwdir):
         """
         subbas, idxs_out = basins.subbasins_area(
             idxs_ds=self.idxs_ds,
-            seq=self.idxs_seq,
+            # a tributary writes the area left to the main stem cell beside it,
+            # which has to be read after that write, so this needs the cells
+            # grouped by their distance to the outlet, whatever the ordering of
+            # this object is
+            seq=core.idxs_seq(self.idxs_ds, self.idxs_pit, self._mv),
             idxs_us_main=self.idxs_us_main,
             uparea=self._check_data(uparea, "uparea", unit="km2"),
             area_min=area_min,
@@ -840,7 +847,9 @@ class FlwdirRaster(Flwdir):
     ### ACCUMULATE ####
 
     def upstream_area(
-        self, unit: Literal["m2", "ha", "km2", "cell"] = "cell"
+        self,
+        unit: Literal["m2", "ha", "km2", "cell"] = "cell",
+        parallel: bool = False,
     ) -> np.ndarray:
         """Return the upstream-area raster for the flow directions.
 
@@ -851,6 +860,10 @@ class FlwdirRaster(Flwdir):
         unit : {'m2', 'ha', 'km2', 'cell'}
             Upstream-area units: square metres ('m2'), hectares ('ha'), square kilometres
             ('km2'), or cells ('cell'), by default 'cell'.
+        parallel : bool, optional
+            Accumulate the subbasins in threads, by default False. Needs the
+            cells ordered depth-first, which is the default ordering. The result
+            is the same as the serial one whatever the number of threads.
 
         Returns
         -------
@@ -865,12 +878,23 @@ class FlwdirRaster(Flwdir):
             area = np.ones(self.size, dtype=np.int32)
         else:
             area = self.area.ravel() / gis.AREA_FACTORS[unit]
-        uparea = streams.accuflux(
-            idxs_ds=self.idxs_ds,
-            seq=self.idxs_seq,
-            data=area,
-            nodata=-9999,
-        )
+        if parallel:
+            starts, sizes = self.seq_segments()
+            uparea = streams.accuflux_segments(
+                idxs_ds=self.idxs_ds,
+                seq=self.idxs_seq,
+                data=area,
+                nodata=-9999,
+                starts=starts,
+                sizes=sizes,
+            )
+        else:
+            uparea = streams.accuflux(
+                idxs_ds=self.idxs_ds,
+                seq=self.idxs_seq,
+                data=area,
+                nodata=-9999,
+            )
         uparea[~self.mask] = -9999
         return uparea.reshape(self.shape)
 
@@ -1588,7 +1612,10 @@ class FlwdirRaster(Flwdir):
         """
         elv_out = dem.dig_4connectivity(
             idxs_ds=self.idxs_ds,
-            seq=self.idxs_seq,
+            # the elevation this writes is read by the cells upstream of it, so this
+            # needs the cells grouped by their distance to the outlet, whatever the
+            # ordering of this object is
+            seq=core.idxs_seq(self.idxs_ds, self.idxs_pit, self._mv),
             elv_flat=self._check_data(elevtn, "elevtn"),
             mask=self._check_data(rivmsk, "rivmsk", optional=True),
             shape=self.shape,
